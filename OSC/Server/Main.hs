@@ -37,7 +37,7 @@ bytes2osc b = do
 main :: IO ()
 main = do
     hosc <- U.udpSocketWithHandler "9797" bytes2osc -- . oscDecode
-    U.sendEmpty hosc
+    -- U.sendEmpty hosc this seems to block the following from printing:
     U.sendString "OSC Socks Rock!" hosc
     U.sendEmpty hosc
     C.threadDelay (round 2e6)
