@@ -10,6 +10,9 @@ import qualified Control.Concurrent         as C (forkIO, forkFinally
 						 , MVar, newEmptyMVar, takeMVar, putMVar)
 import qualified Network.Socket             as S hiding (send, sendTo, recv, recvFrom)
 import qualified Data.ByteString            as B (ByteString, empty, null)
+-- | TMP
+import qualified Data.ByteString.Char8      as BC (pack, unpack)
+-- ^ TMP
 import qualified Network.Socket.ByteString  as S
 import qualified Data.Word                  as W (Word16)
 import qualified System.IO                  as SIO (isEOF, putStrLn)
@@ -102,9 +105,6 @@ oscListener action = do
 
 -- |
 -- Perform a computation on raw OSC bytes.
--- | TMP
-import qualified Data.ByteString.Char8      as BC (pack, unpack)
--- ^ TMP
 bytes2osc :: B.ByteString -> IO ()
 bytes2osc b = do
     threadNotifier $ show b
