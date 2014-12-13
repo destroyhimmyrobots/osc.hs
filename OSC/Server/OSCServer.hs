@@ -1,64 +1,108 @@
+{-# LANGUAGE CPP #-}
+
+#ifndef __OSC_SERVER_DEBUG__
+#define __OSC_SERVER_DEBUG__
+#endif
+
 import qualified Control.Monad              as M (liftM, Monad, when)
-import qualified Control.Concurrent         as C (forkFinally, killThread, MVar, newEmptyMVar, putMVar, takeMVar, myThreadId, ThreadId)
+import qualified Control.Concurrent         as C (forkIO, forkFinally
+						 , myThreadId, ThreadId
+						 , MVar, newEmptyMVar, takeMVar, putMVar)
 import qualified Network.Socket             as S hiding (send, sendTo, recv, recvFrom)
-import qualified Data.ByteString            as B (empty, null)
+import qualified Data.ByteString            as B (ByteString, empty, null)
 import qualified Network.Socket.ByteString  as S
 import qualified Data.Word                  as W (Word16)
 import qualified System.IO                  as SIO (isEOF, putStrLn)
 -- import qualified System.Posix.Signals       as SIG (sigTERM, sigQUIT, sigSTOP, installHandler)
 
+#ifdef __OSC_SERVER_DEBUG__
 threadNotifier :: String -> IO ()
 threadNotifier m =
     printThreadId >>= \id -> SIO.putStrLn $ id ++ ": " ++ m
     where
 	printThreadId :: IO String
 	printThreadId = M.liftM show C.myThreadId
+#endif
 
-onStdinEOF :: (a -> IO b) -> a -> IO ()
-onStdinEOF handler args = do
+-- |
+-- On EOF, perform an IO computation.
+onStdinEOF :: IO a -> IO ()
+onStdinEOF action = do
     SIO.putStrLn "Enter ^D (EOF) to quit."
-    SIO.isEOF >>= \e -> M.when e (do handler args; return ())
+    SIO.isEOF >>= \e -> M.when e (do action; return ())
     return ()
     -- isEOF is blocking; do not use unless. isEOF always returns 1.
 
+-- |
+-- Bind a UDP socket on the default interface
 bindUDPSocket :: String -> IO S.Socket
 bindUDPSocket port = S.withSocketsDo $ do
     ai <- S.getAddrInfo	(Just (S.defaultHints {S.addrFlags = [S.AI_PASSIVE]}))
-			Nothing
+			 Nothing
 			(Just port)
     let addr = head ai 
     sock <- S.socket	(S.addrFamily addr)
-			S.Datagram
-			S.defaultProtocol
+			 S.Datagram
+			 S.defaultProtocol
+    -- just returns on already bound
     S.bind sock (S.addrAddress addr)
+#ifdef __OSC_SERVER_DEBUG__
     threadNotifier $ "UDP Socket bound @ " ++ show (S.addrAddress addr) 
+#endif
     return sock
 
-oscMsgHandler :: S.Socket -> IO ()
-oscMsgHandler sock = do
-    msg <- S.recvFrom sock 4096
-    -- new thread to do OSC work
+-- |
+-- Send a null packet to a socket.
+emptySend :: S.Socket -> IO Int
+emptySend s = do
+#ifdef __OSC_SERVER_DEBUG__
+    threadNotifier "Closing..."
+#endif
+    flip S.send B.empty s
+
+-- |
+-- Threadable handler which executes blocking /recvFrom/
+-- on /sock/, passing bytes to /action/.
+closeOnEmptyRecv :: (B.ByteString -> IO ()) -> S.Socket -> IO ()
+closeOnEmptyRecv action sock = do
+#ifdef __OSC_SERVER_DEBUG__
+    threadNotifier "Receiving..."
+#endif
+    (msg, addr) <- S.recvFrom sock 2048
+#ifdef __OSC_SERVER_DEBUG__
     threadNotifier "A wild PACKET appeared!"
-    M.when (B.null $ fst msg) $ return ()
-    oscMsgHandler sock
+#endif
+    M.when (B.null msg) $ do
+#ifdef __OSC_SERVER_DEBUG__
+	threadNotifier "Honoring a close request." 
+#endif
+	return ()
+    C.forkIO $ action msg
+    closeOnEmptyRecv action sock
 
-closeOSCListener :: S.Socket -> IO Int
-closeOSCListener s = do
-    i <- flip S.send B.empty s
-    SIO.putStrLn "Closed a socket."
-    return i
-
-
-oscListener :: String -> (S.Socket -> IO a) -> IO ()
-oscListener port handler = do
+-- |
+-- General function executing ByteString actions
+-- received on a UDP socket in a new thread.
+udpSocketHandler :: String -> (B.ByteString -> IO ()) -> IO S.Socket
+udpSocketHandler port action = do
     sock <- bindUDPSocket port
-    mvar <- C.newEmptyMVar 
-    let tid = C.forkFinally (handler sock)
-			    (\_ -> C.putMVar mvar C.myThreadId)
-    onStdinEOF closeOSCListener sock
-    r <- C.takeMVar mvar
-    S.sClose sock
+    C.forkFinally
+	(closeOnEmptyRecv action sock)
+	(\_ -> S.sClose sock)
+    return sock
+
+-- |
+-- Specific invocation of udpSocketHandler for OSC packet actions.
+oscListener :: (B.ByteString -> IO ()) -> IO ()
+oscListener action = do
+    sock <- udpSocketHandler "9797" action -- . oscDecode
+    onStdinEOF $ emptySend sock
     return ()
-    
+
+-- |
+-- Perform a computation on raw OSC bytes.
+bytes2osc :: B.ByteString -> IO ()
+bytes2osc b = return ()
+
 main :: IO ()
-main = oscListener "9797" oscMsgHandler
+main = oscListener bytes2osc
