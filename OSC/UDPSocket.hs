@@ -1,19 +1,21 @@
-module OSC.UDPSocket    ( udpSocket
-		    , bindUDPSocket
+module OSC.UDPSocket( udpSocket
 		    , udpSocketWithHandler
 		    , sendBytes
 		    , sendEmpty
-		    , sendString) where
+		    , UdpOscHandle ) where
 import qualified Control.Monad              as M (when)
 import qualified Control.Concurrent         as C (forkIO, forkFinally)
 import qualified Network.Socket             as S hiding (send, sendTo, recv, recvFrom)
 import qualified Data.ByteString            as B (ByteString, empty, null)
+import qualified Data.ByteString.Lazy	    as L (ByteString, toStrict)
 import qualified Data.ByteString.Char8      as BC (pack)
 import qualified Network.Socket.ByteString  as S
+
+data UdpOscHandle = UdpOscHandle S.Socket S.SockAddr
 -- |
 -- Open, but do not bind, a UDP Socket on the
 -- default interface on /port/.
-udpSocket :: String -> IO (S.Socket, S.SockAddr)
+udpSocket :: String -> IO UdpOscHandle
 udpSocket port = S.withSocketsDo $ do
     ai <- S.getAddrInfo	(Just (S.defaultHints {S.addrFlags = [S.AI_PASSIVE]}))
 			 Nothing
@@ -23,14 +25,14 @@ udpSocket port = S.withSocketsDo $ do
     sock <- S.socket (S.addrFamily addr)
 			S.Datagram
 			S.defaultProtocol
-    return (sock, saddr)
+    return $ UdpOscHandle sock saddr
 -- |
 -- Bind a UDP socket on the default interface.
-bindUDPSocket :: String -> IO (S.Socket, S.SockAddr)
+bindUDPSocket :: String -> IO UdpOscHandle
 bindUDPSocket port = S.withSocketsDo $ do
-    (sock, saddr) <- udpSocket port
+    uoh@(UdpOscHandle sock saddr) <- udpSocket port
     S.bind sock saddr
-    return (sock, saddr)
+    return uoh
 -- |
 -- Threaded handler which executes blocking /recvFrom/
 -- on /sock/, passing bytes to /action/.
@@ -46,22 +48,19 @@ closeOnEmptyRecv action sock = do
 -- received on a UDP socket in a new thread.
 udpSocketWithHandler :: String
 		     -> (B.ByteString -> IO ())
-		     -> IO (S.Socket, S.SockAddr)
+		     -> IO UdpOscHandle
 udpSocketWithHandler port action = do
-    (sock, saddr) <- bindUDPSocket port
+    ush@(UdpOscHandle sock saddr) <- bindUDPSocket port
     C.forkFinally
 	(closeOnEmptyRecv action sock)
 	(\_ -> S.sClose sock)
-    return (sock, saddr)
+    return ush
 -- |
--- Send a strict ByteString to a socket.
-sendBytes :: B.ByteString -> (S.Socket, S.SockAddr) -> IO Int
-sendBytes b (s, a) = S.sendTo s b a
--- |
--- Send a string to a socket.
-sendString :: Show a => a -> (S.Socket, S.SockAddr) -> IO Int
-sendString g (s, a) = S.sendTo s (BC.pack $ show g) a
+-- Send a Lazy ByteString to a socket.
+sendBytes :: L.ByteString -> UdpOscHandle -> IO Int
+sendBytes b (UdpOscHandle s a) = S.sendTo s (L.toStrict b) a
+
 -- |
 -- Send a null packet to a socket.
-sendEmpty :: (S.Socket, S.SockAddr) -> IO Int
-sendEmpty (s, a) = S.sendTo s B.empty a
+sendEmpty :: UdpOscHandle -> IO Int
+sendEmpty (UdpOscHandle s a) = S.sendTo s B.empty a

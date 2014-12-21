@@ -12,6 +12,8 @@ import qualified Control.Concurrent         as C (myThreadId, ThreadId, threadDe
 import qualified Data.ByteString	    as B
 import qualified System.IO                  as SIO (isEOF, putStrLn)
 
+import Data.List as L (elemIndex)
+
 #ifdef __OSC_SERVER_DEBUG__
 threadNotifier :: String -> IO ()
 threadNotifier m =
@@ -36,20 +38,19 @@ bytes2osc :: B.ByteString -> IO ()
 bytes2osc b = do
 #ifdef __OSC_SERVER_DEBUG__
     threadNotifier $ show b
+    threadNotifier $ show (M.readOSC b)
 #endif
     return ()
 
 main :: IO ()
 main = do
     hosc <- U.udpSocketWithHandler "9797" bytes2osc -- . oscDecode
-    -- U.sendEmpty hosc this seems to block the following from printing:
-    U.sendString "OSC Socks Rock!" hosc
-    U.sendEmpty hosc
-    C.threadDelay (round 2e6)
-
     sosc <- U.udpSocket "12002"
-    snd <- M.oscMessage "/serialosc/list" [A.oscString "127.0.0.1", A.oscInt 9797]
+    -- U.sendEmpty hosc seems to block the following from printing:
+
+    let snd = M.oscMessage "/serialosc/list" [A.oscString "127.0.0.1", A.oscInt 9797]
+    print snd
     M.sendOSC snd sosc
 
-    C.threadDelay (round 2e6)
+    C.threadDelay (round 5e6)
     return ()
